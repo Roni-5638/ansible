@@ -1,0 +1,87 @@
+- name: Ansible Prompt | Join Domain Oracle Linux 8 | domain.com
+  hosts: docker2
+  vars_prompt:
+    - name: name_server
+      prompt: "Qual o nome do servidor?"
+      private: false      
+    - name: "username"
+      prompt: "Qual o usuário que será utilizado para ingressar no dominio domain.com?"
+      private: false
+    - name: "bind_password"
+      prompt: "Digite a senha do usuário para ingressar no dominio domain.local"
+      confirm: yes
+      private: yes
+
+  tasks:
+    - name: Atualizando o nome do servidor
+      hostname:
+        name: "{{ name_server }}"
+
+    - name: Atualizando o sistema operacional
+      yum: name=* state=latest
+      when: ansible_os_family == 'RedHat'
+
+    - name: Instalando pacotes necessários para ingressar no dominio domain.com
+      yum:
+        name:
+         - sssd
+         - krb5-workstation
+         - krb5-libs
+         - samba-common-tools
+         - oddjob
+         - oddjob-mkhomedir
+         - adcli
+         - python39
+         - python3-pip
+         - realmd
+         - vim
+        state: present
+
+    - name: Permitindo autenticação com usuário e senha via SSH
+      lineinfile:
+         path: /etc/ssh/sshd_config
+         regexp: 'PasswordAuthentication no'
+         line: 'PasswordAuthentication yes'
+
+    - name: Reiniciando o serviço SSHD
+      systemd:
+        name: sshd
+        state: restarted
+
+    - name: Alterando endereço DNS no arquivo resolv.conf
+      lineinfile:
+       path: /etc/resolv.conf
+       regexp: "^nameserver"
+       line: "nameserver SERVIDOR_DNS"
+
+    - name: Instalando pexpect usando o pip
+      pip:
+        name: pexpect
+      become: yes
+
+    - name: Ingressando no dominio domain.com
+      expect:
+        command: /bin/bash -c "/usr/sbin/realm join --user={{ username }} domain.com"
+        responses:
+         Password for *: "{{ bind_password }}"
+
+
+    - name: Ajustes no arquivo sssd.conf
+      lineinfile:
+        dest: /etc/sssd/sssd.conf
+        line: 'default_domain_suffix = domain.com'
+        insertafter: '^\[sssd\]'
+
+    - name: Permitindo conexões via SSH através do realm
+      command: /bin/bash -c "/usr/sbin/realm permit --all"
+
+    - name: Adicionando grupo no arquivo sudoers - Infraestrutura e Cloud
+      lineinfile:
+        dest: /etc/sudoers
+        line: '%infraestrutura@domain.com        ALL=(ALL)       ALL'
+        insertafter: '^%wheel'
+
+    - name: Reiniciando o servidor
+      reboot:
+        post_reboot_delay: 30
+        reboot_timeout: 600
